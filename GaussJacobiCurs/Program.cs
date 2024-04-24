@@ -96,7 +96,7 @@ namespace GaussSeidel_Jacobi
             int n = constants.Length; // Размер системы уравнений
             double[] currentSolution = new double[n]; // Текущее решение
             double[] nextSolution = new double[n]; // Новое решение
-            if (!IsDiagonallyDominant(cosefficients))
+            if (!IsDiagonallyDominant(coefficients))
             {
                 RearrangeForDiagonalDominance(ref coefficients, ref constants);
             }
