@@ -8,16 +8,15 @@ namespace GaussSeidel_Jacobi
     {
         static void Main()
         {
-            string filePath = "3.txt";
-            double[,] coefficients;
-            double[] constants;
+            string filePath = "1.txt";
+            double[,] A;
+            double[] b;
             // Чтение из файла
             using (StreamReader reader = new StreamReader(filePath))
             {
                 int numEquations = int.Parse(reader.ReadLine()); // Чтение количества уравнений
-                coefficients = new double[numEquations, numEquations]; // Создание массива коэффициентов
-                constants = new double[numEquations]; // Создание массива констант
-
+                A = new double[numEquations, numEquations]; // Создание массива коэффициентов
+                b = new double[numEquations]; // Создание массива констант
                 // Заполнение массива коэффициентов и массива констант
                 for (int i = 0; i < numEquations; i++)
                 {
@@ -25,35 +24,53 @@ namespace GaussSeidel_Jacobi
                     for (int j = 0; j <= numEquations; j++)
                     {
                         if (j != numEquations)
-                            coefficients[i, j] = double.Parse(coefficients_file[j]);
+                            A[i, j] = double.Parse(coefficients_file[j]);
                         else
-                            constants[i] = double.Parse(coefficients_file[j]);
+                            b[i] = double.Parse(coefficients_file[j]);
                     }
                 }
             }
-
-            double[] initialGuess = constants; // Начальное приближение
-            int iterations = 1000; // Максимальное количество итераций
-            double tolerance = 0.0001; // Допустимая погрешность
+            double[,] B = new double[b.Length, b.Length];
+            double[,] E = new double[b.Length, b.Length];
+            double[,] D = new double[b.Length, b.Length];
+            double[,] L = new double[b.Length, b.Length];
+            double[] g = new double[b.Length];
+            for (int i = 0; i < b.Length; i++)
+            {
+                for (int j = 0; j < b.Length; j++)
+                {
+                    E[i, j] = 0;
+                    D[i, j] = 0;
+                    if (i == j)
+                    {
+                        E[i, j] = 1;
+                        D[i, j] = A[i, j];
+                    }
+                    if (i > j)
+                        L[i, j] = A[i, j];
+                }
+                g[i] = 0;
+            }
             
+            double[] initialGuess = b; // Начальное приближение
+            int iterations = 10000; // Максимальное количество итераций
+            double tolerance = 0.00001; // Допустимая погрешность
+
             // Создание экземпляра класса LinearEquationSolver
-            LinearEquationSolver solver = new LinearEquationSolver(coefficients, constants, initialGuess, iterations, tolerance);
+            LinearEquationSolver solver = new LinearEquationSolver(A, B, E, D, L, b, g, initialGuess, iterations, tolerance);
 
             // Решение СЛАУ методом Якоби
             Console.WriteLine("Решение методом Якоби:");
             double[] jacobiSolution = solver.JacobiMethod();
+            PrintSolution(jacobiSolution);
 
             // Решение СЛАУ методом Гаусса-Зейделя
             Console.WriteLine("\nРешение методом Гаусса-Зейделя:");
             double[] gaussSeidelSolution = solver.SolveUsingGaussSeidel();
-            
-            // Вывод решений СЛАУ
-            PrintSolution(jacobiSolution);
             PrintSolution(gaussSeidelSolution);
-            
+
             Console.ReadLine();
         }
-
         // Метод для вывода решения на экран
         static void PrintSolution(double[] solution)
         {
@@ -74,17 +91,28 @@ namespace GaussSeidel_Jacobi
     }
     class LinearEquationSolver
     {
-        private double[,] coefficients; // Матрица коэффициентов
-        private double[] constants;     // Вектор констант
+        private double[,] A; // Матрица коэффициентов
+        private double[] b;     // Вектор констант
+        private double[,] B;
+        private double[,] E;
+        private double[,] D;
+        private double[,] L;
+        private double[] g;
         private double[] initialGuess;  // Начальное приближение
         private int iterations;         // Количество итераций
         private double tolerance;       // Допустимая погрешность
 
         // Конструктор класса
-        public LinearEquationSolver(double[,] coefficients, double[] constants, double[] initialGuess, int iterations, double tolerance)
+        public LinearEquationSolver(double[,] A, double[,] B, double[,] E, double[,] D, double[,] L, double[] b, double[] g,
+                                    double[] initialGuess, int iterations, double tolerance)
         {
-            this.coefficients = coefficients;
-            this.constants = constants;
+            this.A = A;
+            this.B = B;
+            this.E = E;
+            this.D = D;
+            this.L = L;
+            this.b = b;
+            this.g = g;
             this.initialGuess = initialGuess;
             this.iterations = iterations;
             this.tolerance = tolerance;
@@ -93,36 +121,54 @@ namespace GaussSeidel_Jacobi
         // Метод решения СЛАУ методом Якоби
         public double[] JacobiMethod()
         {
-            int n = constants.Length; // Размер системы уравнений
+            bool check = false;
+            int n = b.Length; // Размер системы уравнений
             double[] currentSolution = new double[n]; // Текущее решение
             double[] nextSolution = new double[n]; // Новое решение
-            if (!IsDiagonallyDominant(coefficients))
-            {
-                RearrangeForDiagonalDominance(ref coefficients, ref constants);
-            }
+            double[,] D_1 = new double[n, n];
             // Инициализация начальным приближением
             Array.Copy(initialGuess, currentSolution, n);
-
+            Array.Copy(D, D_1, n * n);
+            D_1 = InverseMatrix(D_1);
+            for (int i = 0; i < n; i++)
+                g[i] = 0;
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    B[i, j] = E[i, j];
+                    for (int k = 0; k < n; k++)
+                        B[i, j] -= D_1[i, k] * A[k, j];
+                    g[i] += D_1[i, j] * b[j];
+                }
+            }
+            double norm = CalculateMatrix1Norm(B);
+            if (norm > 1)
+            {
+                Console.WriteLine("Норма матрицы равна: " + norm);
+                Console.WriteLine("Метод может не сойтись!");
+            }
+            else
+                Console.WriteLine("Норма матрицы равна: " + norm);
             for (int iter = 0; iter < iterations; iter++)
             { // Итерации
                 for (int i = 0; i < n; i++)
                 { // Обновление каждой переменной
-                    double sum = constants[i]; // Сумма для i-го уравнения
-                    
+                    nextSolution[i] = g[i];
                     for (int j = 0; j < n; j++)
-                    { // Вычитание членов с другими переменными
-                        if (j != i)
-                        {
-                            sum -= coefficients[i, j] * currentSolution[j];
-                        }
-                    }
-
-                    // Деление на диагональный элемент
-                    nextSolution[i] = sum / coefficients[i, i];
+                        nextSolution[i] += B[i, j] * currentSolution[j];
                 }
-
+                foreach(var solution in nextSolution)
+                {
+                    if(solution == Double.NegativeInfinity || Double.IsNaN(solution))
+                    {
+                        check = true;
+                        Console.WriteLine($"Метод Якоби не сошелся после {iter + 1} итераций.");
+                        return null;
+                    }
+                }    
                 // Проверка сходимости
-                if (IsConverged(currentSolution, nextSolution))
+                if (IsConverged(currentSolution, nextSolution) && !check)
                 {
                     Console.WriteLine($"Метод Якоби сошелся после {iter + 1} итераций.");
                     return nextSolution;
@@ -138,133 +184,166 @@ namespace GaussSeidel_Jacobi
         // Метод решения СЛАУ методом Гаусса-Зейделя
         public double[] SolveUsingGaussSeidel()
         {
-            if (!IsDiagonallyDominant(coefficients))
-            {
-                RearrangeForDiagonalDominance(ref coefficients, ref constants);
-            }
-            int n = constants.Length;
-            double[] currentSolution = new double[n];
-            double[] nextSolution = new double[n];
+            bool check = false;
+            int n = b.Length; // Размер системы уравнений
+            double[] currentSolution = new double[n]; // Текущее решение
+            double[] nextSolution = new double[n]; // Новое решение
+            double[,] D_2 = new double[n, n];
+            // Инициализация начальным приближением
             Array.Copy(initialGuess, currentSolution, n);
-
-            for (int iter = 0; iter < iterations; iter++)
+            Array.Copy(D, D_2, n*n);
+            for (int i = 0; i < n; i++)
             {
-                for (int i = 0; i < n; i++)
+                g[i] = 0;
+                for(int j = 0; j < n; j++)
                 {
-                    double sum = constants[i];
-                    for (int j = 0; j < n; j++)
-                    {
-                        if (j != i)
-                        {
-                            sum -= coefficients[i, j] * nextSolution[j];
-                        }
-                    }
-                    nextSolution[i] = sum / coefficients[i, i];
+                    D_2[i, j] += L[i, j];
                 }
-
-                if (IsConverged(currentSolution, nextSolution))
+            }
+            D_2 = InverseMatrix(D_2);
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
                 {
+                    B[i, j] = E[i, j];
+                    for (int k = 0; k < n; k++)
+                        B[i, j] -= D_2[i, k] * A[k, j];
+                    g[i] += D_2[i, j] * b[j];
+                }
+            }
+            double norm = CalculateMatrix1Norm(B);
+            if (norm > 1)
+            {
+                Console.WriteLine("Норма матрицы равна: " + norm);
+                Console.WriteLine("Метод может не сойтись!");
+            }
+            else
+                Console.WriteLine("Норма матрицы равна: " + norm);
+            for (int iter = 0; iter < iterations; iter++)
+            { // Итерации
+                for (int i = 0; i < n; i++)
+                { // Обновление каждой переменной
+                    nextSolution[i] = g[i];
+                    for (int j = 0; j < n; j++)
+                        nextSolution[i] += B[i, j] * currentSolution[j];
+                }
+                foreach (var solution in nextSolution)
+                {
+                    if (solution == Double.NegativeInfinity || Double.IsNaN(solution))
+                    {
+                        check = true;
+                        Console.WriteLine($"Метод Гаусса-Зейделя не сошелся после {iter + 1} итераций.");
+                        return null;
+                    }
+                }
+                // Проверка сходимости
+                if (IsConverged(currentSolution, nextSolution) && !check)
+                {
+                    
                     Console.WriteLine($"Метод Гаусса-Зейделя сошелся после {iter + 1} итераций.");
                     return nextSolution;
                 }
 
+                // Переход к следующему шагу итерации
                 Array.Copy(nextSolution, currentSolution, n);
             }
 
             Console.WriteLine("Метод Гаусса-Зейделя не сошелся за заданное число итераций.");
             return null;
         }
-        // Метод для проверки диагональной доминируемости матрицы коэффициентов
-        private bool IsDiagonallyDominant(double[,] matrix)
+        private double[,] InverseMatrix(double[,] matrix)
         {
-            int rows = matrix.GetLength(0);
-            int cols = matrix.GetLength(1);
+            int n = matrix.GetLength(0);
+            double[,] augmentedMatrix = AugmentMatrix(matrix);
 
-            // Проверяем каждое уравнение
-            for (int i = 0; i < rows; i++)
+            // Applying Gaussian elimination
+            for (int i = 0; i < n; i++)
             {
-                double diagonalElement = Math.Abs(matrix[i, i]);
-                double sum = 0;
-
-                // Суммируем абсолютные значения всех элементов строки, кроме диагонального элемента
-                for (int j = 0; j < cols; j++)
+                // Finding pivot row
+                int pivotRow = i;
+                for (int j = i + 1; j < n; j++)
                 {
-                    if (j != i)
+                    if (Math.Abs(augmentedMatrix[j, i]) > Math.Abs(augmentedMatrix[pivotRow, i]))
                     {
-                        sum += Math.Abs(matrix[i, j]);
+                        pivotRow = j;
                     }
                 }
 
-                // Проверяем условие диагональной доминируемости
-                if (diagonalElement <= sum)
+                // Swapping rows if necessary
+                if (pivotRow != i)
                 {
-                    return false; // Матрица не является диагонально доминирующей
+                    for (int k = 0; k < 2 * n; k++)
+                    {
+                        double temp = augmentedMatrix[i, k];
+                        augmentedMatrix[i, k] = augmentedMatrix[pivotRow, k];
+                        augmentedMatrix[pivotRow, k] = temp;
+                    }
                 }
-            }
-
-            return true; // Матрица является диагонально доминирующей
-        }
-        private void RearrangeForDiagonalDominance(ref double[,] matrix, ref double[] constants)
-        {
-            int n = matrix.GetLength(0);
-            int maxAttempts = 2 * n; // Максимальное количество попыток перестановок
-
-            // Перебираем каждое уравнение
-            for (int i = 0; i < n; i++)
-            {
-                // Находим сумму абсолютных значений всех элементов строки, кроме диагонального элемента
-                double sum = 0;
+                // Normalizing pivot row
+                double pivotValue = augmentedMatrix[i, i];
+                for (int k = 0; k < 2 * n; k++)
+                {
+                    augmentedMatrix[i, k] /= pivotValue;
+                }
+                // Elimination
                 for (int j = 0; j < n; j++)
                 {
                     if (j != i)
                     {
-                        sum += Math.Abs(matrix[i, j]);
-                    }
-                }
-
-                // Если сумма абсолютных значений меньше или равна диагональному элементу,
-                // значит, нужно поменять местами текущее уравнение с другим
-                if (sum >= Math.Abs(matrix[i, i]))
-                {
-                    int attempts = 0; // Счетчик попыток перестановок
-
-                    // Ищем уравнение, с которым текущее уравнение можно поменять местами
-                    for (int k = i + 1; k < n && attempts < maxAttempts; k++)
-                    {
-                        // Меняем местами строки
-                        SwapRows(ref matrix, i, k);
-                        double temp = constants[i];
-                        constants[i] = constants[k];
-                        constants[k] = temp;
-                        // Проверяем, стала ли матрица диагонально доминирующей после перестановки
-                        if (IsDiagonallyDominant(matrix))
+                        double factor = augmentedMatrix[j, i];
+                        for (int k = 0; k < 2 * n; k++)
                         {
-                            return; // Если да, завершаем функцию
+                            augmentedMatrix[j, k] -= factor * augmentedMatrix[i, k];
                         }
-
-                        // Если нет, отменяем перестановку и пробуем другое уравнение
-                        SwapRows(ref matrix, i, k);
-                        temp = constants[i];
-                        constants[i] = constants[k];
-                        constants[k] = temp;
-                        attempts++; // Увеличиваем счетчик попыток
                     }
                 }
             }
-        }
+            // Extracting inverse matrix
+            double[,] inverse = new double[n, n];
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    inverse[i, j] = augmentedMatrix[i, j + n];
+                }
+            }
 
-        // Метод для обмена строк матрицы
-        private void SwapRows(ref double[,] matrix, int row1, int row2)
+            return inverse;
+        }
+        private double[,] AugmentMatrix(double[,] matrix)
         {
+            int n = matrix.GetLength(0);
+            double[,] augmentedMatrix = new double[n, 2 * n];
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    augmentedMatrix[i, j] = matrix[i, j];
+                }
+                augmentedMatrix[i, i + n] = 1;
+            }
+            return augmentedMatrix;
+        }
+        private double CalculateMatrix1Norm(double[,] matrix)
+        {
+            int rows = matrix.GetLength(0);
             int cols = matrix.GetLength(1);
+
+            double maxSum = 0;
+
+            // Суммируем абсолютные значения элементов по столбцам и выбираем максимальную сумму
             for (int j = 0; j < cols; j++)
             {
-                double temp = matrix[row1, j];
-                matrix[row1, j] = matrix[row2, j];
-                matrix[row2, j] = temp;
+                double columnSum = 0;
+                for (int i = 0; i < rows; i++)
+                {
+                    columnSum += Math.Abs(matrix[i, j]);
+                }
+                maxSum = Math.Max(maxSum, columnSum);
             }
-        }
 
+            return maxSum;
+        }
         // Метод проверки сходимости
         private bool IsConverged(double[] previousSolution, double[] currentSolution)
         {
@@ -279,4 +358,5 @@ namespace GaussSeidel_Jacobi
             return true;
         }
     }
+
 }
